@@ -64,6 +64,27 @@
       (should-not (memq #'mdr-preview--schedule-update after-change-functions))
       (should-not mdr-preview--server))))
 
+(ert-deftest mdr-preview-test-survives-a-major-mode-change ()
+  ;; A change of major mode wipes buffer-local state; the server must not be
+  ;; orphaned by it.  A fake mdr is enough: only the server is looked at.
+  (let ((mdr-preview-program (mdr-preview-test--fake-mdr "--allow-connect"))
+        (mdr-preview--capable nil)
+        (mdr-preview-browse-function #'ignore)
+        server)
+    (unwind-protect
+        (with-temp-buffer
+          (mdr-preview-mode 1)
+          (setq server mdr-preview--server)
+          (text-mode)
+          (should mdr-preview-mode)
+          (should (eq mdr-preview--server server))
+          (should (process-live-p server))
+          (should (memq #'mdr-preview--schedule-update after-change-functions))
+          (should (memq #'mdr-preview--teardown kill-buffer-hook))
+          (mdr-preview-mode -1)
+          (should-not (process-live-p server)))
+      (delete-file mdr-preview-program))))
+
 ;;;; End to end
 
 (defun mdr-preview-test--capable-p ()
@@ -137,6 +158,19 @@
     (should-not (process-live-p server))
     (should (equal (with-current-buffer stream (buffer-string))
                    "event: reload\ndata:\n\nevent: bye\ndata:\n\n"))))
+
+(ert-deftest mdr-preview-test-revert-keeps-the-preview-and-re-renders ()
+  (skip-unless (mdr-preview-test--capable-p))
+  (mdr-preview-test--with-preview "# Before\n"
+    (save-buffer)
+    (let ((server mdr-preview--server))
+      (with-temp-file buffer-file-name (insert "# After revert\n"))
+      (revert-buffer t t)
+      (mdr-preview-test--wait 1.5)
+      (should mdr-preview-mode)
+      (should (eq mdr-preview--server server))
+      (should (string-search "After revert"
+                             (decode-coding-string mdr-preview--page 'utf-8))))))
 
 (provide 'mdr-preview-test)
 ;;; mdr-preview-test.el ends here

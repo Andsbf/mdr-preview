@@ -5,7 +5,7 @@
 ;; Author: Ando <andsbf@gmail.com>
 ;; Maintainer: Ando <andsbf@gmail.com>
 ;; URL: https://github.com/Andsbf/mdr-preview
-;; Version: 0.1.0
+;; Version: 0.1.1
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: text, markdown, convenience
 ;; SPDX-License-Identifier: GPL-3.0-or-later
@@ -86,6 +86,13 @@ the browser's."
 (defvar-local mdr-preview--page nil "Latest rendered page, UTF-8 encoded.")
 (defvar-local mdr-preview--timer nil "Pending debounced re-render.")
 (defvar-local mdr-preview--process nil "The mdr process rendering this buffer.")
+
+;; A major-mode change (including the one `revert-buffer' makes) runs
+;; `kill-all-local-variables'.  Without this the mode would be switched off
+;; without its teardown, orphaning the server: the preview survives instead.
+(dolist (var '(mdr-preview--server mdr-preview--clients mdr-preview--page
+               mdr-preview--timer mdr-preview--process))
+  (put var 'permanent-local t))
 
 (defvar mdr-preview--capable nil
   "Alist of (EXECUTABLE . SUPPORTED) for mdr binaries already probed.")
@@ -286,6 +293,9 @@ The request is for the preview of SOURCE, served on PORT."
                               (with-current-buffer source
                                 (mdr-preview--update))))))))
 
+;; The hooks are buffer-local, and would go with the variables above.
+(put 'mdr-preview--schedule-update 'permanent-local-hook t)
+
 (defun mdr-preview--teardown ()
   "Stop rendering, tell the browser, and shut the preview server down."
   (when (timerp mdr-preview--timer)
@@ -301,6 +311,8 @@ The request is for the preview of SOURCE, served on PORT."
         mdr-preview--clients nil
         mdr-preview--server nil
         mdr-preview--page nil))
+
+(put 'mdr-preview--teardown 'permanent-local-hook t)
 
 ;;;; Commands
 
@@ -330,6 +342,9 @@ server."
     (remove-hook 'after-change-functions #'mdr-preview--schedule-update t)
     (remove-hook 'kill-buffer-hook #'mdr-preview--teardown t)
     (mdr-preview--teardown)))
+
+;; With its state and hooks, the mode itself outlives a major-mode change.
+(put 'mdr-preview-mode 'permanent-local t)
 
 (defun mdr-preview-browse ()
   "Open this buffer's preview in the browser, for instance after closing its tab."

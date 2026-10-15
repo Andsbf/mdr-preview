@@ -59,7 +59,10 @@ The package binds no keys itself; pick whatever suits your config.
 | `mdr-preview-browse` | Open the preview again, e.g. after closing its tab |
 
 Turning the mode off, or killing the buffer, stops the server and marks the
-browser tab "(closed)".
+browser tab "(closed)". The preview survives a change of major mode and
+`revert-buffer`; a revert re-renders like any other edit. Quitting Emacs stops
+the server too, but without telling the tab, which then keeps retrying until
+you close it.
 
 ## Options
 
