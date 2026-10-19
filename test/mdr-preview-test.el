@@ -40,21 +40,106 @@
 
 (ert-deftest mdr-preview-test-missing-program-is-a-user-error ()
   (let ((mdr-preview-program "mdr-preview-test-no-such-program"))
-    (should-error (mdr-preview--check-program) :type 'user-error)))
+    (should-error (mdr-preview--ensure-program) :type 'user-error)))
 
 (ert-deftest mdr-preview-test-mdr-without-allow-connect-is-refused ()
   (let* ((mdr-preview-program (mdr-preview-test--fake-mdr "--export <FORMAT>"))
          (mdr-preview--capable nil)
-         (err (should-error (mdr-preview--check-program) :type 'user-error)))
-    (should (string-search "Andsbf/mdr" (cadr err)))
+         (err (should-error (mdr-preview--ensure-program) :type 'user-error)))
+    (should (string-search "--allow-connect" (cadr err)))
     (delete-file mdr-preview-program)))
 
 (ert-deftest mdr-preview-test-mdr-with-allow-connect-is-accepted ()
   (let ((mdr-preview-program (mdr-preview-test--fake-mdr "--allow-connect  With --export"))
         (mdr-preview--capable nil))
-    (mdr-preview--check-program)
-    (should (cdr (assoc (executable-find mdr-preview-program) mdr-preview--capable)))
+    (should (equal (mdr-preview--ensure-program) (executable-find mdr-preview-program)))
     (delete-file mdr-preview-program)))
+
+;;;; Downloading mdr
+
+(ert-deftest mdr-preview-test-targets ()
+  (dolist (case '((darwin "aarch64-apple-darwin25.6.0" "aarch64-apple-darwin")
+                  (darwin "arm64-apple-darwin23" "aarch64-apple-darwin")
+                  (darwin "x86_64-apple-darwin21.1.0" "x86_64-apple-darwin")
+                  (gnu/linux "x86_64-pc-linux-gnu" "x86_64-unknown-linux-gnu")
+                  (gnu/linux "aarch64-unknown-linux-gnu" "aarch64-unknown-linux-gnu")
+                  (windows-nt "x86_64-w64-mingw32" "x86_64-pc-windows-msvc")
+                  ;; No prebuilt binary for these.
+                  (windows-nt "aarch64-w64-mingw32" nil)
+                  (berkeley-unix "x86_64-unknown-freebsd14.0" nil)))
+    (should (equal (mdr-preview--target (nth 0 case) (nth 1 case)) (nth 2 case))))
+  ;; Every target the mapping can produce has an archive to download.
+  (dolist (target (delq nil (list (mdr-preview--target 'darwin "aarch64")
+                                  (mdr-preview--target 'darwin "x86_64")
+                                  (mdr-preview--target 'gnu/linux "aarch64")
+                                  (mdr-preview--target 'gnu/linux "x86_64")
+                                  (mdr-preview--target 'windows-nt "x86_64"))))
+    (should (assoc target mdr-preview--mdr-archives))))
+
+(ert-deftest mdr-preview-test-pinned-hashes-look-like-sha256 ()
+  (dolist (entry mdr-preview--mdr-archives)
+    (should (string-match-p "\\`[0-9a-f]\\{64\\}\\'" (cddr entry)))))
+
+(defmacro mdr-preview-test--with-release (sha256 &rest body)
+  "Run BODY with a local release whose archive holds a fake capable mdr.
+The archive is pinned with SHA256, or with its real hash when SHA256 is
+nil.  `install-dir' is bound to the empty install directory."
+  (declare (indent 1))
+  `(let* ((root (make-temp-file "mdr-preview-release" t))
+          (release-dir (expand-file-name mdr-preview-mdr-release root))
+          (install-dir (expand-file-name "install/" root))
+          (target (mdr-preview--target))
+          (archive "mdr-test.tar.gz"))
+     (unwind-protect
+         (progn
+           (make-directory release-dir t)
+           (let ((stage (expand-file-name "stage" root)))
+             (make-directory stage)
+             (rename-file (mdr-preview-test--fake-mdr "--allow-connect")
+                          (expand-file-name "mdr" stage))
+             (call-process "tar" nil nil nil "-czf"
+                           (expand-file-name archive release-dir) "-C" stage "mdr"))
+           (let ((mdr-preview--mdr-download-url (concat "file://" root "/%s/%s"))
+                 (mdr-preview--mdr-archives
+                  (list (cons target
+                              (cons archive
+                                    (or ,sha256
+                                        (mdr-preview--file-sha256
+                                         (expand-file-name archive release-dir)))))))
+                 (mdr-preview-install-directory install-dir)
+                 (mdr-preview--capable nil))
+             ,@body))
+       (delete-directory root t))))
+
+(ert-deftest mdr-preview-test-install-unpacks-a-verified-archive ()
+  (skip-unless (and (mdr-preview--target) (not (eq system-type 'windows-nt))))
+  (mdr-preview-test--with-release nil
+    (let ((exe (mdr-preview-install-mdr)))
+      (should (equal exe (expand-file-name
+                          (concat mdr-preview-mdr-release "/mdr") install-dir)))
+      (should (file-executable-p exe))
+      (should (equal (mdr-preview--installed-program) exe)))))
+
+(ert-deftest mdr-preview-test-install-refuses-a-checksum-mismatch ()
+  (skip-unless (and (mdr-preview--target) (not (eq system-type 'windows-nt))))
+  (mdr-preview-test--with-release (make-string 64 ?0)
+    (should-error (mdr-preview-install-mdr))
+    (should-not (mdr-preview--installed-program))))
+
+(ert-deftest mdr-preview-test-install-without-tar-fails-before-downloading ()
+  (skip-unless (mdr-preview--target))
+  (let ((exec-path nil)
+        ;; Would error differently if the download were attempted.
+        (mdr-preview--mdr-download-url "file:///mdr-preview-test-no-such-dir/%s/%s"))
+    (should-error (mdr-preview-install-mdr) :type 'user-error)))
+
+(ert-deftest mdr-preview-test-falls-back-to-the-installed-mdr ()
+  (skip-unless (and (mdr-preview--target) (not (eq system-type 'windows-nt))))
+  (mdr-preview-test--with-release nil
+    (let ((exe (mdr-preview-install-mdr))
+          (exec-path nil)                 ; no mdr on the path
+          (mdr-preview-program nil))
+      (should (equal (mdr-preview--ensure-program) exe)))))
 
 (ert-deftest mdr-preview-test-failed-start-leaves-nothing-behind ()
   (with-temp-buffer
@@ -90,7 +175,8 @@
 (defun mdr-preview-test--capable-p ()
   "Whether the installed mdr and curl can run the end-to-end tests."
   (and (executable-find "curl")
-       (ignore-errors (mdr-preview--check-program) t)))
+       (let ((mdr-preview-program nil))
+         (ignore-errors (mdr-preview--ensure-program)))))
 
 (defun mdr-preview-test--curl (&rest args)
   "Run curl with ARGS asynchronously; return its output buffer."

@@ -11,14 +11,38 @@ search, and a table of contents that collapses as a whole or section by section.
 ## Requirements
 
 - Emacs 29.1 or later
-- An mdr with `--export html` and `--allow-connect`
+- An mdr with `--export html` and `--allow-connect`, which the package can
+  download for you
+
+### mdr
 
 The two mdr flags are proposed upstream in
 [CleverCloud/mdr#79](https://github.com/CleverCloud/mdr/pull/79). Until a
-release has them, install mdr from the fork, whose `main` carries that PR along
+release has them, they come from the fork,
+[Andsbf/mdr](https://github.com/Andsbf/mdr). Its `main` carries that PR along
 with [#77](https://github.com/CleverCloud/mdr/pull/77) (fullscreen diagram
 fixes) and [#78](https://github.com/CleverCloud/mdr/pull/78) (collapsible
-table of contents):
+table of contents).
+
+**You don't have to install it yourself.** If no `mdr` on your `exec-path`
+supports `--allow-connect`, turning `mdr-preview-mode` on offers to download a
+prebuilt one (`M-x mdr-preview-install-mdr` does the same). The download:
+
+- comes from the fork's
+  [releases](https://github.com/Andsbf/mdr/releases), built by its CI;
+- is picked for macOS (Apple silicon or Intel), Linux (x86_64 or arm64) or
+  Windows (x86_64);
+- is checked against SHA-256 hashes pinned in `mdr-preview.el`, so an archive
+  that doesn't match is refused and nothing is installed;
+- is unpacked into `~/.emacs.d/mdr-preview/<release>/`
+  (`mdr-preview-install-directory`) and used only by this package. Nothing goes
+  on your `PATH`.
+
+On Linux, the prebuilt mdr also needs GTK 3 and WebKitGTK 4.1 to start, even
+though the preview never opens a window. Most desktops have both; otherwise
+install `libgtk-3-0` and `libwebkit2gtk-4.1-0` (Debian/Ubuntu names).
+
+To build it yourself instead:
 
 ```sh
 # Nix (the flake has no lock file, which Nix will not write for a remote flake)
@@ -28,8 +52,8 @@ nix profile add --no-write-lock-file github:Andsbf/mdr
 cargo install --git https://github.com/Andsbf/mdr
 ```
 
-`mdr --help` should list `--allow-connect`. If it doesn't, `mdr-preview-mode`
-says so when you turn it on.
+An mdr on your `exec-path` that supports `--allow-connect` is preferred over
+the downloaded one. To force a particular binary, set `mdr-preview-program`.
 
 ## Install
 
@@ -57,6 +81,7 @@ The package binds no keys itself; pick whatever suits your config.
 |---|---|
 | `mdr-preview-mode` | Toggle the live preview of the current buffer |
 | `mdr-preview-browse` | Open the preview again, e.g. after closing its tab |
+| `mdr-preview-install-mdr` | Download the prebuilt mdr (asked for automatically when needed) |
 
 Turning the mode off, or killing the buffer, stops the server and marks the
 browser tab "(closed)". The preview survives a change of major mode and
@@ -70,7 +95,8 @@ you close it.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `mdr-preview-program` | `"mdr"` | The mdr executable |
+| `mdr-preview-program` | `nil` | The mdr executable; `nil` finds one on `exec-path`, else uses the downloaded one |
+| `mdr-preview-install-directory` | `~/.emacs.d/mdr-preview/` | Where the downloaded mdr goes |
 | `mdr-preview-delay` | `0.3` | Seconds of quiet after an edit before re-rendering |
 | `mdr-preview-arguments` | `nil` | Extra mdr arguments, e.g. `("--offline")` or `("--theme" "dark")` |
 | `mdr-preview-browse-function` | `browse-url` | How the preview's URL is opened |
